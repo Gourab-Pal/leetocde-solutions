@@ -15,7 +15,6 @@ class Solution {
                 map.put(current, i);
             }
         }
-
         return res;
     }
 }
