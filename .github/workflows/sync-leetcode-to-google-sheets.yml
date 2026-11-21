@@ -1,0 +1,178 @@
+name: Sync LeetHub submissions to Google Sheets
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'LeetCode/**'
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Sync changed LeetHub problems to Google Sheets
+        uses: actions/github-script@v7
+        env:
+          SHEETS_WEB_APP_URL: \${{ secrets.SHEETS_WEB_APP_URL }}
+          SHEETS_SYNC_TOKEN: \${{ secrets.SHEETS_SYNC_TOKEN }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const after = context.sha;
+            const before = context.payload.before;
+
+            if (!process.env.SHEETS_WEB_APP_URL || !process.env.SHEETS_SYNC_TOKEN) {
+              core.setFailed('Missing repository Actions secrets: SHEETS_WEB_APP_URL and/or SHEETS_SYNC_TOKEN.');
+              return;
+            }
+
+            // GitHub Actions push payloads may omit per-commit changed-file lists.
+            // Compare the pushed range to get the actual paths.
+            let changedPaths = [];
+            if (before && !/^0+$/.test(before)) {
+              const comparison = await github.rest.repos.compareCommits({
+                owner,
+                repo,
+                base: before,
+                head: after
+              });
+              changedPaths = (comparison.data.files || []).map(file => file.filename);
+            } else {
+              const tree = await github.rest.git.getTree({
+                owner,
+                repo,
+                tree_sha: after,
+                recursive: 'true'
+              });
+              changedPaths = (tree.data.tree || [])
+                .filter(item => item.type === 'blob')
+                .map(item => item.path);
+            }
+
+            const problemFolders = [...new Set(changedPaths
+              .map(path => {
+                const match = path.match(/^(LeetCode\/(?:Easy|Medium|Hard)\/\d+-[^/]+)\//);
+                return match ? match[1] : null;
+              })
+              .filter(Boolean))];
+
+            if (problemFolders.length === 0) {
+              core.info('No LeetHub problem folders changed. Nothing to sync.');
+              return;
+            }
+
+            function decodeHtml(value) {
+              return value
+                .replace(/<[^>]*>/g, ' ')
+                .replace(/&nbsp;/gi, ' ')
+                .replace(/&amp;/gi, '&')
+                .replace(/&lt;/gi, '<')
+                .replace(/&gt;/gi, '>')
+                .replace(/&quot;/gi, '"')
+                .replace(/&#39;|&apos;/gi, "'")
+                .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+                .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+                .replace(/\s+/g, ' ')
+                .trim();
+            }
+
+            for (const folder of problemFolders) {
+              const readmePath = \`\${folder}/README.md\`;
+              let readmeResponse;
+              try {
+                readmeResponse = await github.rest.repos.getContent({
+                  owner,
+                  repo,
+                  path: readmePath,
+                  ref: after
+                });
+              } catch (error) {
+                core.warning(\`Skipping \${folder}: README.md is not available (\${error.message}).\`);
+                continue;
+              }
+
+              if (Array.isArray(readmeResponse.data) || !readmeResponse.data.content) {
+                core.warning(\`Skipping \${folder}: README content could not be read.\`);
+                continue;
+              }
+
+              const readmeHtml = Buffer.from(readmeResponse.data.content, 'base64').toString('utf8');
+              const heading = readmeHtml.match(/<h2>\s*<a\s+href=["']([^"']+)["'][^>]*>\s*(\d+)\.\s*([\s\S]*?)<\/a>\s*<\/h2>\s*<h3>\s*(Easy|Medium|Hard)\s*<\/h3>/i);
+              if (!heading) {
+                core.warning(\`Skipping \${folder}: could not parse LeetHub README title/difficulty.\`);
+                continue;
+              }
+
+              const leetcodeId = Number(heading[2]);
+              const title = decodeHtml(heading[3]);
+              const leetcodeUrl = heading[1].replace(/\/$/, '') + '/';
+              const difficulty = heading[4][0].toUpperCase() + heading[4].slice(1).toLowerCase();
+
+              // Prefer the Java file changed in this push. If only the README changed,
+              // fall back to the newest-looking Java filename in the problem folder.
+              const changedJava = changedPaths
+                .filter(path => path.startsWith(\`\${folder}/\`) && path.toLowerCase().endsWith('.java'))
+                .sort()
+                .pop();
+
+              let javaPath = changedJava;
+              if (!javaPath) {
+                try {
+                  const dirResponse = await github.rest.repos.getContent({
+                    owner,
+                    repo,
+                    path: folder,
+                    ref: after
+                  });
+                  const javaFiles = (Array.isArray(dirResponse.data) ? dirResponse.data : [])
+                    .filter(item => item.type === 'file' && item.name.toLowerCase().endsWith('.java'))
+                    .sort((a, b) => a.name.localeCompare(b.name));
+                  if (javaFiles.length > 0) javaPath = javaFiles[javaFiles.length - 1].path;
+                } catch (error) {
+                  core.warning(\`Could not list Java files in \${folder}: \${error.message}\`);
+                }
+              }
+
+              const githubSolutionUrl = javaPath
+                ? \`https://github.com/\${owner}/\${repo}/blob/\${after}/\${javaPath}\`
+                : \`https://github.com/\${owner}/\${repo}/tree/\${after}/\${folder}\`;
+              const sourcePath = javaPath || \`\${folder}/README.md\`;
+              const submittedAt = context.payload.head_commit?.timestamp || new Date().toISOString();
+
+              const payload = {
+                token: process.env.SHEETS_SYNC_TOKEN,
+                repository: \`\${owner}/\${repo}\`,
+                leetcodeId,
+                title,
+                difficulty,
+                leetcodeUrl,
+                githubSolutionUrl,
+                submittedAt,
+                sourceCommit: after,
+                sourcePath
+              };
+
+              const response = await fetch(process.env.SHEETS_WEB_APP_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                redirect: 'follow',
+                body: JSON.stringify(payload)
+              });
+              const responseText = await response.text();
+              let result;
+              try {
+                result = JSON.parse(responseText);
+              } catch (error) {
+                throw new Error(\`Google Apps Script returned a non-JSON response for LeetCode #\${leetcodeId}: \${responseText.slice(0, 300)}\`);
+              }
+              if (!response.ok || !result.ok) {
+                throw new Error(\`Google Sheets sync failed for LeetCode #\${leetcodeId}: \${result.error || response.statusText}\`);
+              }
+              core.info(\`LeetCode #\${leetcodeId} (\${title}): \${result.action} row \${result.row}.\`);
+            }
