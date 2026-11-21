@@ -6,6 +6,5 @@ class Solution {
         }
         if(nums.length != set.size()) return true;
         return false;
-        
     }
 }
