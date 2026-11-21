@@ -18,8 +18,8 @@ jobs:
       - name: Sync changed LeetHub problems to Google Sheets
         uses: actions/github-script@v7
         env:
-          SHEETS_WEB_APP_URL: \${{ secrets.SHEETS_WEB_APP_URL }}
-          SHEETS_SYNC_TOKEN: \${{ secrets.SHEETS_SYNC_TOKEN }}
+          SHEETS_WEB_APP_URL: ${{ secrets.SHEETS_WEB_APP_URL }}
+          SHEETS_SYNC_TOKEN: ${{ secrets.SHEETS_SYNC_TOKEN }}
         with:
           script: |
             const owner = context.repo.owner;
