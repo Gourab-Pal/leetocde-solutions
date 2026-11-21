@@ -83,7 +83,7 @@ jobs:
             }
 
             for (const folder of problemFolders) {
-              const readmePath = \`\${folder}/README.md\`;
+              const readmePath = `${folder}/README.md`;
               let readmeResponse;
               try {
                 readmeResponse = await github.rest.repos.getContent({
@@ -93,19 +93,19 @@ jobs:
                   ref: after
                 });
               } catch (error) {
-                core.warning(\`Skipping \${folder}: README.md is not available (\${error.message}).\`);
+                core.warning(`Skipping ${folder}: README.md is not available (${error.message}).`);
                 continue;
               }
 
               if (Array.isArray(readmeResponse.data) || !readmeResponse.data.content) {
-                core.warning(\`Skipping \${folder}: README content could not be read.\`);
+                core.warning(`Skipping ${folder}: README content could not be read.`);
                 continue;
               }
 
               const readmeHtml = Buffer.from(readmeResponse.data.content, 'base64').toString('utf8');
               const heading = readmeHtml.match(/<h2>\s*<a\s+href=["']([^"']+)["'][^>]*>\s*(\d+)\.\s*([\s\S]*?)<\/a>\s*<\/h2>\s*<h3>\s*(Easy|Medium|Hard)\s*<\/h3>/i);
               if (!heading) {
-                core.warning(\`Skipping \${folder}: could not parse LeetHub README title/difficulty.\`);
+                core.warning(`Skipping ${folder}: could not parse LeetHub README title/difficulty.`);
                 continue;
               }
 
@@ -117,7 +117,7 @@ jobs:
               // Prefer the Java file changed in this push. If only the README changed,
               // fall back to the newest-looking Java filename in the problem folder.
               const changedJava = changedPaths
-                .filter(path => path.startsWith(\`\${folder}/\`) && path.toLowerCase().endsWith('.java'))
+                .filter(path => path.startsWith(`${folder}/`) && path.toLowerCase().endsWith('.java'))
                 .sort()
                 .pop();
 
@@ -135,19 +135,19 @@ jobs:
                     .sort((a, b) => a.name.localeCompare(b.name));
                   if (javaFiles.length > 0) javaPath = javaFiles[javaFiles.length - 1].path;
                 } catch (error) {
-                  core.warning(\`Could not list Java files in \${folder}: \${error.message}\`);
+                  core.warning(`Could not list Java files in ${folder}: ${error.message}`);
                 }
               }
 
               const githubSolutionUrl = javaPath
-                ? \`https://github.com/\${owner}/\${repo}/blob/\${after}/\${javaPath}\`
-                : \`https://github.com/\${owner}/\${repo}/tree/\${after}/\${folder}\`;
-              const sourcePath = javaPath || \`\${folder}/README.md\`;
+                ? `https://github.com/${owner}/${repo}/blob/${after}/${javaPath}`
+                : `https://github.com/${owner}/${repo}/tree/${after}/${folder}`;
+              const sourcePath = javaPath || `${folder}/README.md`;
               const submittedAt = context.payload.head_commit?.timestamp || new Date().toISOString();
 
               const payload = {
                 token: process.env.SHEETS_SYNC_TOKEN,
-                repository: \`\${owner}/\${repo}\`,
+                repository: `${owner}/${repo}`,
                 leetcodeId,
                 title,
                 difficulty,
@@ -169,10 +169,10 @@ jobs:
               try {
                 result = JSON.parse(responseText);
               } catch (error) {
-                throw new Error(\`Google Apps Script returned a non-JSON response for LeetCode #\${leetcodeId}: \${responseText.slice(0, 300)}\`);
+                throw new Error(`Google Apps Script returned a non-JSON response for LeetCode #${leetcodeId}: ${responseText.slice(0, 300)}`);
               }
               if (!response.ok || !result.ok) {
-                throw new Error(\`Google Sheets sync failed for LeetCode #\${leetcodeId}: \${result.error || response.statusText}\`);
+                throw new Error(`Google Sheets sync failed for LeetCode #${leetcodeId}: ${result.error || response.statusText}`);
               }
-              core.info(\`LeetCode #\${leetcodeId} (\${title}): \${result.action} row \${result.row}.\`);
+              core.info(`LeetCode #${leetcodeId} (${title}): ${result.action} row ${result.row}.`);
             }
